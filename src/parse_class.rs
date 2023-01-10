@@ -301,13 +301,12 @@ fn move_methods_to_real(info: &mut ClassInfo){
 
 fn move_methods_to_impl(from: &mut ItemImpl, to: &mut ItemImpl, origin: &ItemImpl) {
     let real_methods: Vec<String> = get_methods(origin).iter()
-            .map(get_signature_string)
-            .map(|s| s.split_ascii_whitespace().collect()).collect();
+            .map(get_signature_string).collect();
     
     let mut removed: Vec<String> = Vec::new();
 
     for method in get_methods(from) {
-        let signature_string = get_signature_string(&method).split_ascii_whitespace().collect();
+        let signature_string = get_signature_string(&method);
         if real_methods.contains(&signature_string) {
             to.items.push(syn::ImplItem::Method(method));
             removed.push(signature_string);
