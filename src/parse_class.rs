@@ -1,6 +1,7 @@
 use std::borrow::Borrow;
 
-use proc_macro::{TokenStream, Ident, Span};
+use proc_macro::{TokenStream, Span};
+use proc_macro2::Ident;
 use quote::{ToTokens, TokenStreamExt, quote};
 use syn::{self, Token, ItemStruct, ItemImpl, parse::{Parse, Parser}, Result, Error, Path, Type, Field, Expr, Stmt, ExprBlock, Block, Pat, PathSegment, parse2, Signature, ImplItemMethod};
 
@@ -101,7 +102,7 @@ pub fn parse_class(info: &mut ClassInfo) {
 
 
 
-fn parse_impl_with_parent(item_impl: &mut ItemImpl, info: &ClassInfo, parent: &ClassInfo) {
+fn parse_impl_with_parent(item_impl: &mut ItemImpl, info: &mut ClassInfo, parent: &ClassInfo) {
     /*
         move_methods_to_prototype
         move_methods_to_real
@@ -122,6 +123,8 @@ fn parse_impl_with_parent(item_impl: &mut ItemImpl, info: &ClassInfo, parent: &C
         }
         create constructor
     */
+    move_methods_to_prototype(info);
+
 }
 
 fn get_signature_string(method: &ImplItemMethod) -> String {
@@ -131,27 +134,42 @@ fn get_signature_string(method: &ImplItemMethod) -> String {
 fn move_methods_to_prototype(info: &mut ClassInfo){
     let parent_info = info.get_parent_info();
     let prototype = parent_info.get().get_real();
-    let name = info.get_ident();
 
-    let mut o_prototype_impl = info._trait_impl.get_mut(&Box::new(info.get_real()));
+    let mut o_prototype_impl = info._trait_impl.get_mut(&Box::new(prototype.clone()));
     if o_prototype_impl.is_none() {
         create_prototype(info);
-        o_prototype_impl = info._trait_impl.get_mut(&Box::new(info.get_real()));
+        o_prototype_impl = info._trait_impl.get_mut(&Box::new(prototype));
     }
-    
-    let prototype_impl: &mut ItemImpl = o_prototype_impl.as_mut().unwrap().as_mut();
-    let prototype_methods: Vec<String> = get_methods(prototype_impl).iter().map(get_signature_string).collect();
+
+    move_methods_to_impl(info._impl.as_mut().unwrap(), o_prototype_impl.as_mut().unwrap());
+}
+
+fn move_methods_to_real(info: &mut ClassInfo){
+    let real = info.get_real();
+    let name = info.get_ident();
+
+    let mut o_real_impl = info._trait_impl.get_mut(&Box::new(real.clone()));
+    if o_real_impl.is_none() {
+        create_trait_impl(info, &real, &name);
+        o_real_impl = info._trait_impl.get_mut(&Box::new(real));
+    }
+
+    move_methods_to_impl(info._impl.as_mut().unwrap(), o_real_impl.as_mut().unwrap());
+}
+
+fn move_methods_to_impl(from: &mut ItemImpl, to: &mut ItemImpl) {
+    let real_methods: Vec<String> = get_methods(to).iter().map(get_signature_string).collect();
     
     let mut removed: Vec<String> = Vec::new();
 
-    for method in get_methods(info._impl.as_ref().unwrap()) {
+    for method in get_methods(from) {
         let signature_string = get_signature_string(&method);
-        if prototype_methods.iter().position(|x| *x == signature_string).is_some() {
-            prototype_impl.items.push(syn::ImplItem::Method(method));
+        if real_methods.iter().position(|x| *x == signature_string).is_some() {
+            to.items.push(syn::ImplItem::Method(method));
             removed.push(signature_string);
         }
     }
-    info._impl.as_mut().unwrap().items.retain(|item| match item {
+    from.items.retain(|item| match item {
         syn::ImplItem::Method(method) => {
             !removed.contains(&get_signature_string(method))
         },
@@ -163,9 +181,12 @@ fn create_prototype(info: &mut ClassInfo) {
     let parent_info = info.get_parent_info();
     let prototype = parent_info.get().get_real();
     let name = info.get_ident();
-    
-    
+
+    create_trait_impl(info, &prototype, &name);
+}
+
+fn create_trait_impl(info: &mut ClassInfo, _trait: &Ident, name: &Ident) {
     info._trait_impl.insert(Box::new(info.get_real()), Box::new(syn::parse2(quote!{
-        impl #prototype for #name { }
+        impl #_trait for #name { }
     }).unwrap()));
 }
