@@ -1,14 +1,15 @@
-use syn::{Expr, Block, Pat, Stmt, parse2};
-use quote::quote;
+use proc_macro2::TokenStream;
+use syn::{Expr, Block, Pat, Stmt, parse2, ExprTuple};
+use quote::{quote, ToTokens};
 
-fn parse_statement(stmt: &mut Stmt) {
+fn parse_statement(stmt: &mut Stmt) -> TokenStream {
     match stmt {
         Stmt::Local(x) => {
             if x.init.is_some() {
-                parse_expr(&mut x.init.as_mut().unwrap().1)
+                parse_expr(&mut x.init.as_mut().unwrap().1);
             }
         },
-        Stmt::Item(_) => todo!(),
+        Stmt::Item(_) => {},
         Stmt::Expr(x) => {
             parse_expr(x);
         },
@@ -16,19 +17,22 @@ fn parse_statement(stmt: &mut Stmt) {
             parse_expr(x);
         },
     }
+    stmt.to_token_stream()
 }
 
-fn parse_pattern(pat: &mut Pat) {
-
+fn parse_pattern(pat: &mut Pat) -> TokenStream {
+    pat.to_token_stream()
 }
 
-pub fn parse_block(block: &mut Block) {
+pub fn parse_block(block: &mut Block) -> TokenStream {
     for line in &mut block.stmts {
         parse_statement(line);
     }
+    block.to_token_stream()
 }
 
-pub fn parse_expr(expr: &mut Expr) {
+pub fn parse_expr(expr: &mut Expr) -> TokenStream{
+    
     match expr {
         Expr::Array(x) => {
             for elem in &mut x.elems {
@@ -72,7 +76,7 @@ pub fn parse_expr(expr: &mut Expr) {
         },
         Expr::Continue(_) => todo!(),
         Expr::Field(x) => {
-            parse_expr(&mut x.base);
+            x.base = syn::parse2(parse_expr(&mut x.base)).unwrap();
         },
         Expr::ForLoop(x) => {
             for line in &mut x.body.stmts {
@@ -90,7 +94,7 @@ pub fn parse_expr(expr: &mut Expr) {
             }
         },
         Expr::Index(x) => {
-            parse_expr(&mut x.expr);
+            x.expr = syn::parse2(parse_expr(&mut x.expr)).unwrap();
             
             parse_expr(&mut x.index);
         },
@@ -102,8 +106,11 @@ pub fn parse_expr(expr: &mut Expr) {
             parse_block(&mut x.body);
         },
         Expr::Macro(x) => {
-            let _expr: &mut Expr = &mut syn::parse2(x.mac.tokens.clone()).unwrap();
-            parse_expr(_expr);
+            let tokens = &x.mac.tokens;
+            
+            let _expr: &mut ExprTuple = &mut syn::parse2(quote!{( #tokens )}).unwrap();
+            let _expr: ExprTuple = syn::parse2(parse_expr(&mut Expr::Tuple(_expr.to_owned()))).unwrap();
+            x.mac.tokens = _expr.elems.to_token_stream();
         },
         Expr::Match(x) => {
             parse_expr(&mut x.expr);
@@ -113,7 +120,7 @@ pub fn parse_expr(expr: &mut Expr) {
             }
         },
         Expr::MethodCall(method) => {
-            parse_expr(&mut method.receiver);
+            method.receiver = syn::parse2(parse_expr(&mut method.receiver)).unwrap();
             for arg in &mut method.args {
                 parse_expr(arg);
             }
@@ -125,11 +132,13 @@ pub fn parse_expr(expr: &mut Expr) {
             let segments = &mut x.path.segments;
             if segments.len() == 1 {
                 if &segments[0].ident.to_string() == "self" {
-                    segments.clear();
-                    segments.push(parse2(quote!{unsafe {self.__real__.as_ref().unwrap()}}).unwrap());
+                    return quote!{unsafe {self.__real__.as_ref().unwrap()}}
                 } else if &segments[0].ident.to_string() == "super" {
                     segments.clear();
                     segments.push(parse2(quote!{self.__prototype__}).unwrap());
+                } else if &segments[0].ident.to_string() == "this" {
+                    segments.clear();
+                    segments.push(parse2(quote!{self}).unwrap());
                 }
             }
         },
@@ -142,7 +151,7 @@ pub fn parse_expr(expr: &mut Expr) {
             }
         },
         Expr::Reference(x) => {
-            parse_expr(&mut x.expr)
+            parse_expr(&mut x.expr);
         },
         Expr::Repeat(x) => {
             parse_expr(&mut x.expr);
@@ -189,6 +198,8 @@ pub fn parse_expr(expr: &mut Expr) {
                 parse_expr(&mut x.expr.as_mut().unwrap());
             }
         },
-        _ => todo!(),
+        _ => {
+        },
     }
+    expr.to_token_stream()
 }

@@ -1,9 +1,8 @@
-use std::collections::HashMap;
+use std::{collections::HashMap};
 
-use proc_macro::TokenStream;
 use proc_macro2::Ident;
-use quote::{ToTokens, TokenStreamExt};
-use syn::{self, Token, ItemStruct, ItemImpl, parse::Parse, Result, Error, Path, Type, ItemTrait};
+use quote::{ToTokens};
+use syn::{self, Token, ItemStruct, ItemImpl, Result, ItemTrait};
 
 use crate::CLASSES;
 mod kw {
@@ -15,7 +14,6 @@ pub trait Serializable {
     fn deserialize(from: String) -> Self;
 }
 
-//#[derive(Clone)]
 pub struct ParentInfo {
     extend_token: kw::extends,
     pub parent: Ident,
@@ -24,9 +22,9 @@ pub struct ParentInfo {
 
 impl syn::parse::Parse for ParentInfo {
     fn parse(input: syn::parse::ParseStream) -> Result<Self> {
-        let lookahead = input.lookahead1();
         let extend_token: kw::extends = input.parse()?;
         let parent: Ident = input.parse()?;
+        let lookahead = input.lookahead1();
         let end: Option<Token![;]> = if lookahead.peek(Token![;]) {
             Some(input.parse()?)
         } else {
@@ -45,20 +43,20 @@ impl Clone for ParentInfo {
         ParentInfo { 
             extend_token: self.extend_token.clone(), 
             parent: self.parent.clone(), 
-            end: self.end.clone() }
+            end: self.end.clone() 
+        }
     }
 }
 
 impl Serializable for ParentInfo {
     fn serialize(&self) -> String {
-        self.parent.to_string()
+        format!("extends {} ", self.parent)
     }
     fn deserialize(from: String) -> Self {
         syn::parse2(quote::quote!{extends #from ;}).unwrap()
     }
 }
 
-//#[derive(Clone)]
 pub struct ClassInfo {
     pub _parent: Option<ParentInfo>,
     pub _struct: Option<ItemStruct>,
@@ -78,15 +76,34 @@ impl ClassInfo {
 
     pub fn get_parent_info(&self) -> ClassInfo {
         let class_map = CLASSES.lock().unwrap();
-        println!("before find parent");
+        //println!("before find parent");
         let result = class_map.get(&self._parent.as_ref().unwrap().parent.to_string());
-        println!("after find parent");
+        //println!("after find parent");
         if result.is_none() {
             panic!("the parent of {}, {} is null", self.get_ident(), self._parent.as_ref().unwrap().parent.to_string());
         } else {
-            println!("find parent: {}", self._parent.as_ref().unwrap().parent.to_string());
+            //println!("find parent: {}", self._parent.as_ref().unwrap().parent.to_string());
         }
         ClassInfo::deserialize(result.unwrap().to_string())
+    }
+
+    pub fn get_mro(&self) -> Vec<ClassInfo> {
+        let class_map = CLASSES.lock().unwrap();
+        let mut current = self.clone();
+        let mut mro = Vec::new();
+        loop {
+            if current._parent.is_none() {
+                return mro;
+            }
+            let result = class_map.get(&current._parent.as_ref().unwrap().parent.to_string());
+            if result.is_none() {
+                return mro
+            } else {
+                current = ClassInfo::deserialize(result.unwrap().to_string());
+                mro.push(current.clone());
+            }
+        }
+        
     }
 }
 
@@ -106,7 +123,6 @@ impl syn::parse::Parse for ClassInfo {
         while !input.is_empty() {
             let item_impl: Box<ItemImpl> = Box::new(input.parse()?);
             if item_impl.as_ref().trait_.is_some() {
-                //let a = item_impl.as_ref().trait_.as_ref().unwrap().1.get_ident().as_ref().unwrap();
                 _trait_impl.insert(Box::new(item_impl.trait_.as_ref().unwrap().1.get_ident().unwrap().clone()), item_impl);
             } else {
                 _impl = Some(*item_impl);
@@ -179,37 +195,13 @@ impl Eq for SyncType {
     }
 }
 
-//#[derive(Clone)]
 pub struct SyncClassInfo(pub ClassInfo);
 
 unsafe impl Sync for SyncClassInfo {}
 unsafe impl Send for SyncClassInfo {}
-
-impl SyncClassInfo {
-    pub fn get(&self) -> &ClassInfo{
-        &self.0
-    }
-}
 
 impl Clone for SyncClassInfo {
     fn clone(&self) -> Self {
         SyncClassInfo(self.0.clone())
     }
 }
-
-/* impl std::hash::Hash for SyncClassInfo {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        if self.0._impl.is_some() {
-            self.0._impl.unwrap().to_token_stream().to_string().hash(state)
-        }
-        if self.0._parent.is_some() {
-            self.0._parent.unwrap().parent.to_token_stream().to_string().hash(state)
-        }
-        if self.0._struct.is_some() {
-            self.0._struct.unwrap().to_token_stream().to_string().hash(state)
-        }
-        for _trait in self.0._trait_impl.keys() {
-            _trait.hash(state);
-        }
-    }
-} */
