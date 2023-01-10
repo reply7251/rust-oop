@@ -7,6 +7,8 @@ use lazy_static::lazy_static;
 mod info;
 #[allow(unused_variables, dead_code, unused_mut, unused_imports)]
 mod parse_class;
+#[allow(unused_variables, dead_code, unused_mut, unused_imports)]
+mod parse_expr;
 use info::{ClassInfo, ParentInfo};
 use quote::quote;
 use syn::{Type, TypeArray, parse2};
