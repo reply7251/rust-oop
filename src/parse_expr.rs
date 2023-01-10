@@ -2,20 +2,33 @@ use syn::{Expr, Block, Pat, Stmt, parse2};
 use quote::quote;
 
 fn parse_statement(stmt: &mut Stmt) {
-
+    match stmt {
+        Stmt::Local(x) => {
+            if x.init.is_some() {
+                parse_expr(&mut x.init.as_mut().unwrap().1)
+            }
+        },
+        Stmt::Item(_) => todo!(),
+        Stmt::Expr(x) => {
+            parse_expr(x);
+        },
+        Stmt::Semi(x, _) => {
+            parse_expr(x);
+        },
+    }
 }
 
 fn parse_pattern(pat: &mut Pat) {
 
 }
 
-fn parse_block(block: &mut Block) {
+pub fn parse_block(block: &mut Block) {
     for line in &mut block.stmts {
         parse_statement(line);
     }
 }
 
-fn parse_expr(expr: &mut Expr) {
+pub fn parse_expr(expr: &mut Expr) {
     match expr {
         Expr::Array(x) => {
             for elem in &mut x.elems {
@@ -114,6 +127,9 @@ fn parse_expr(expr: &mut Expr) {
                 if &segments[0].ident.to_string() == "self" {
                     segments.clear();
                     segments.push(parse2(quote!{unsafe {self.__real__.as_ref().unwrap()}}).unwrap());
+                } else if &segments[0].ident.to_string() == "super" {
+                    segments.clear();
+                    segments.push(parse2(quote!{self.__prototype__}).unwrap());
                 }
             }
         },

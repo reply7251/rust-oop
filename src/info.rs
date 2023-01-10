@@ -1,18 +1,24 @@
 use std::collections::HashMap;
 
 use proc_macro::TokenStream;
+use proc_macro2::Ident;
 use quote::{ToTokens, TokenStreamExt};
-use syn::{self, Token, ItemStruct, ItemImpl, parse::Parse, Result, Error, Path, Type};
+use syn::{self, Token, ItemStruct, ItemImpl, parse::Parse, Result, Error, Path, Type, ItemTrait};
 
 use crate::CLASSES;
 mod kw {
     syn::custom_keyword!(extends);
 }
 
-#[derive(Clone)]
+pub trait Serializable {
+    fn serialize(&self) -> String;
+    fn deserialize(from: String) -> Self;
+}
+
+//#[derive(Clone)]
 pub struct ParentInfo {
     extend_token: kw::extends,
-    pub parent: Type,
+    pub parent: Ident,
     end: Option<Token![;]>,
 }
 
@@ -20,7 +26,7 @@ impl syn::parse::Parse for ParentInfo {
     fn parse(input: syn::parse::ParseStream) -> Result<Self> {
         let lookahead = input.lookahead1();
         let extend_token: kw::extends = input.parse()?;
-        let parent: Type = input.parse()?;
+        let parent: Ident = input.parse()?;
         let end: Option<Token![;]> = if lookahead.peek(Token![;]) {
             Some(input.parse()?)
         } else {
@@ -34,12 +40,31 @@ impl syn::parse::Parse for ParentInfo {
     }
 }
 
-#[derive(Clone)]
+impl Clone for ParentInfo {
+    fn clone(&self) -> Self {
+        ParentInfo { 
+            extend_token: self.extend_token.clone(), 
+            parent: self.parent.clone(), 
+            end: self.end.clone() }
+    }
+}
+
+impl Serializable for ParentInfo {
+    fn serialize(&self) -> String {
+        self.parent.to_string()
+    }
+    fn deserialize(from: String) -> Self {
+        syn::parse2(quote::quote!{extends #from ;}).unwrap()
+    }
+}
+
+//#[derive(Clone)]
 pub struct ClassInfo {
     pub _parent: Option<ParentInfo>,
     pub _struct: Option<ItemStruct>,
     pub _impl: Option<ItemImpl>,
     pub _trait_impl: HashMap<Box<syn::Ident>, Box<ItemImpl>>,
+    pub real_trait: Option<ItemTrait>,
 }
 
 impl ClassInfo {
@@ -51,13 +76,17 @@ impl ClassInfo {
         self._struct.as_ref().unwrap().ident.clone()
     }
 
-    pub fn get_parent_info(&self) -> SyncClassInfo {
+    pub fn get_parent_info(&self) -> ClassInfo {
         let class_map = CLASSES.lock().unwrap();
-        let result = class_map.get(&SyncType(self._parent.as_ref().unwrap().parent.clone()));
+        println!("before find parent");
+        let result = class_map.get(&self._parent.as_ref().unwrap().parent.to_string());
+        println!("after find parent");
         if result.is_none() {
-            panic!("the parent of {} is null", self.get_ident());
+            panic!("the parent of {}, {} is null", self.get_ident(), self._parent.as_ref().unwrap().parent.to_string());
+        } else {
+            println!("find parent: {}", self._parent.as_ref().unwrap().parent.to_string());
         }
-        result.unwrap().clone()
+        ClassInfo::deserialize(result.unwrap().to_string())
     }
 }
 
@@ -88,11 +117,43 @@ impl syn::parse::Parse for ClassInfo {
             _parent,
             _struct,
             _impl,
-            _trait_impl
+            _trait_impl,
+            real_trait: None
         })
     }
 }
-pub struct SyncType(Type);
+
+impl Clone for ClassInfo {
+    fn clone(&self) -> Self {
+        ClassInfo { 
+            _parent: self._parent.clone(), 
+            _struct: self._struct.clone(), 
+            _impl: self._impl.clone(), 
+            _trait_impl: self._trait_impl.clone(), 
+            real_trait: self.real_trait.clone()
+        }
+    }
+}
+
+impl Serializable for ClassInfo {
+    fn deserialize(from: String) -> Self {
+        syn::parse_str(&from).unwrap()
+    }
+    fn serialize(&self) -> String {
+        let mut result = String::new();
+        if self._parent.is_some() {
+            result += &self._parent.as_ref().unwrap().serialize();
+        }
+        result += &self._struct.as_ref().unwrap().to_token_stream().to_string();
+        result += &self._impl.as_ref().unwrap().to_token_stream().to_string();
+        for _trait_impl in self._trait_impl.values() {
+            result += &_trait_impl.to_token_stream().to_string();
+        }
+        result
+    }
+}
+
+pub struct SyncType(pub Ident);
 
 unsafe impl Sync for SyncType {}
 unsafe impl Send for SyncType {}
@@ -118,8 +179,8 @@ impl Eq for SyncType {
     }
 }
 
-#[derive(Clone)]
-pub struct SyncClassInfo(ClassInfo);
+//#[derive(Clone)]
+pub struct SyncClassInfo(pub ClassInfo);
 
 unsafe impl Sync for SyncClassInfo {}
 unsafe impl Send for SyncClassInfo {}
@@ -127,6 +188,12 @@ unsafe impl Send for SyncClassInfo {}
 impl SyncClassInfo {
     pub fn get(&self) -> &ClassInfo{
         &self.0
+    }
+}
+
+impl Clone for SyncClassInfo {
+    fn clone(&self) -> Self {
+        SyncClassInfo(self.0.clone())
     }
 }
 
