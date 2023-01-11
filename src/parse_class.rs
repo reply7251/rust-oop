@@ -108,14 +108,20 @@ fn create_new_with_parent(info: &mut ClassInfo, parent: &ClassInfo) {
         });
     }
 
+    let new_inputs = if parent_inputs.len() > 0 {
+        quote!{ #(#parent_inputs),* ,  #(#inputs),* }
+    } else {
+        quote!{ #(#inputs),* }
+    };
+
     info._impl.as_mut().unwrap().items.push(syn::ImplItem::Method(syn::parse2(quote!{
-        pub fn new( #(#parent_inputs),*  ,  #(#inputs),* ) -> std::pin::Pin<Box<Self>> {
+        pub fn new( #new_inputs ) -> std::pin::Pin<Box<Self>> {
             let __prototype__ = #parent_type ::new( #(#parent_inputs_call),* );
             let mut this = Box::pin(Self { 
-                #(#fields),* ,
                 __prototype__,
                 __real__: std::ptr::null_mut::<Self>(), 
                 _pinned: std::marker::PhantomPinned,
+                #(#fields),*
             });
             unsafe { 
                 this.as_mut().get_unchecked_mut().__real__ =  this.as_mut().get_unchecked_mut();
