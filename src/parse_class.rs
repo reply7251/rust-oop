@@ -11,6 +11,24 @@ fn get_methods(item_impl: &ItemImpl) -> Vec<syn::ImplItemMethod> {
     }).collect()
 }
 
+fn get_meta_from_method(method: &ImplItemMethod) -> Vec<String> {
+    method.attrs.iter().filter_map(|x| x.parse_meta().ok()).map(|x| x.to_token_stream().to_string()).collect()
+}
+
+fn remove_meta_from_method(method: &mut ImplItemMethod, meta: &String) {
+    let pos = method.attrs.iter_mut().position(|x| {
+        let parsed = x.parse_meta();
+        if parsed.is_ok() {
+            &parsed.unwrap().to_token_stream().to_string() == meta
+        }else {
+            false
+        }
+    });
+    if pos.is_some() {
+        method.attrs.remove(pos.unwrap());
+    }
+}
+
 fn clear_methods(item_impl: &mut ItemImpl) {
     item_impl.items.retain(|x| match x {
         syn::ImplItem::Method(_) => false,
@@ -35,11 +53,11 @@ fn create_new(info: &mut ClassInfo) {
     }
 
     info._impl.as_mut().unwrap().items.push(syn::ImplItem::Method(syn::parse2(quote!{
-        pub fn new( #(#inputs),* ) -> std::pin::Pin<Box<Self>> {
+        pub fn new( #(#inputs),* ) -> ::std::pin::Pin<Box<Self>> {
             let mut this = Box::pin(Self { 
-                #(#fields),* ,
-                __real__: std::ptr::null_mut::<Self>(), 
-                _pinned: std::marker::PhantomPinned,
+                __real__: ::std::ptr::null_mut::<Self>(), 
+                _pinned: ::std::marker::PhantomPinned,
+                #(#fields),*
             });
             unsafe { 
                 this.as_mut().get_unchecked_mut().__real__ =  this.as_mut().get_unchecked_mut();
@@ -115,12 +133,12 @@ fn create_new_with_parent(info: &mut ClassInfo, parent: &ClassInfo) {
     };
 
     info._impl.as_mut().unwrap().items.push(syn::ImplItem::Method(syn::parse2(quote!{
-        pub fn new( #new_inputs ) -> std::pin::Pin<Box<Self>> {
+        pub fn new( #new_inputs ) -> ::std::pin::Pin<Box<Self>> {
             let __prototype__ = #parent_type ::new( #(#parent_inputs_call),* );
             let mut this = Box::pin(Self { 
                 __prototype__,
-                __real__: std::ptr::null_mut::<Self>(), 
-                _pinned: std::marker::PhantomPinned,
+                __real__: ::std::ptr::null_mut::<Self>(), 
+                _pinned: ::std::marker::PhantomPinned,
                 #(#fields),*
             });
             unsafe { 
@@ -147,20 +165,34 @@ pub fn parse_class(info: &mut ClassInfo) {
         parse_impl(info);
         create_new(info)
     }
+
+    let keep = String::from("keep");
+    for item in &mut info._impl.as_mut().unwrap().items {
+        match item {
+            syn::ImplItem::Method(method) => {
+                remove_meta_from_method(method, &keep)
+            },
+            _ => {},
+        }
+    }
     
     let mut _struct = info._struct.as_mut().unwrap();
     match _struct.fields {
         syn::Fields::Named(ref mut fields) => {
             if has_parent {
                 let p = &parent.unwrap();
-                fields.named.push(Field::parse_named.parse2(quote!{__prototype__: std::pin::Pin<Box<#p>>}).unwrap());
+                fields.named.push(Field::parse_named.parse2(quote!{__prototype__: ::std::pin::Pin<Box<#p>>}).unwrap());
             }
             let real = syn::Ident::new(&format!("__{}__", _struct.ident), proc_macro2::Span::call_site());
             fields.named.push(Field::parse_named.parse2(quote!{__real__: *mut dyn #real}).unwrap());
-            fields.named.push(Field::parse_named.parse2(quote!{_pinned: std::marker::PhantomPinned}).unwrap());
+            fields.named.push(Field::parse_named.parse2(quote!{_pinned: ::std::marker::PhantomPinned}).unwrap());
         },
-        syn::Fields::Unnamed(_) => todo!(),
-        syn::Fields::Unit => todo!(),
+        syn::Fields::Unnamed(_) => {
+            panic!("not support struct ({}) with unnamed field.", _struct.ident.to_string());
+        },
+        syn::Fields::Unit => {
+            panic!("not support None ({}).", _struct.ident.to_string());
+        },
     }
 }
 
@@ -172,6 +204,7 @@ fn parse_impl(info: &mut ClassInfo) {
 fn parse_impl_with_parent(info: &mut ClassInfo, parent: &ClassInfo) {
     move_methods_to_prototype(info);
     parse_impl(info);
+    retrieve_implements_from_parent(info, parent);
     for _trait_ident in info._trait_impl.clone().keys() {
         let _trait_ident = _trait_ident.clone();
         let o_prototype = parent._trait_impl.get(&_trait_ident.clone());
@@ -197,9 +230,14 @@ fn parse_impl_with_parent(info: &mut ClassInfo, parent: &ClassInfo) {
             let sign = &method.sig;
             let method_name = &method.sig.ident;
             let mut inputs: Vec<Ident> = Vec::new();
+            let mut is_mut = false;
             for input in &sign.inputs {
                 match input {
-                    syn::FnArg::Receiver(_) => {},
+                    syn::FnArg::Receiver(x) => {
+                        if x.mutability.is_some() {
+                            is_mut = true;
+                        }
+                    },
                     syn::FnArg::Typed(x) => {
                         match *x.pat.clone() {
                             Pat::Ident(ident) => {
@@ -212,22 +250,38 @@ fn parse_impl_with_parent(info: &mut ClassInfo, parent: &ClassInfo) {
                     },
                 }
             }
-            
-            override_methods.push(syn::parse2(quote!{
+
+            let _super = if is_mut {
+                quote!{ unsafe { self.__prototype__.as_mut().get_unchecked_mut() } }
+            } else {
+                quote!{ self.__prototype__ }
+            };
+
+            let override_method: ImplItemMethod = syn::parse2(quote!{
                 #(#attrs)*
                 #sign {
-                    self.__prototype__. #method_name ( #(#inputs),* )
+                    #_super . #method_name ( #(#inputs),* )
                 }
-            }).unwrap())
+            }).unwrap();
+            
+            override_methods.push(override_method);
         }
 
         let mut mapped: Vec<ImplItem> = override_methods.iter().map(|x| ImplItem::Method(x.to_owned())).collect();
-
         sub_impl.items.append(&mut mapped);
         
         info._trait_impl.insert(_trait_ident.clone(), sub_impl);
     }
 
+}
+
+fn retrieve_implements_from_parent(info: &mut ClassInfo, parent: &ClassInfo) {
+    let mro: Vec<Ident> = info.get_mro().iter().map(|ci| ci.get_real()).collect();
+    for key in parent._trait_impl.keys() {
+        if !mro.contains(&key) && !info._trait_impl.contains_key(key) {
+            create_trait_impl(info, key, &info.get_ident());
+        }
+    }
 }
 
 fn create_real_trait(info: &mut ClassInfo) {
@@ -236,30 +290,34 @@ fn create_real_trait(info: &mut ClassInfo) {
     let real_methods = get_methods(info._impl.as_ref().unwrap());
 
     let mut trait_items: Vec<TraitItem> = Vec::new();
-    
+    let keep = String::from("keep");
     for method in &real_methods {
         let attrs = &method.attrs;
+        if get_meta_from_method(method).contains(&keep) {
+            continue;
+        }
         let sig = &method.sig;
         trait_items.push(syn::parse2(quote!{
             #(#attrs)*
             #sig ;
-        }).unwrap())
+        }).unwrap());
     }
 
     if info._parent.is_some() {
         let prototype = info.get_parent_info().get_real();
         info.real_trait = Some(syn::parse2(quote!{
-            trait #real : #prototype {
+            pub trait #real : #prototype {
                 #(#trait_items)*
             }
-        }).unwrap())
+        }).unwrap());
     } else {
         info.real_trait = Some(syn::parse2(quote!{
-            trait #real {
+            pub trait #real {
                 #(#trait_items)*
             }
-        }).unwrap())
+        }).unwrap());
     }
+    info.real_trait.as_mut().unwrap().generics = info._impl.as_ref().unwrap().generics.clone();
 }
 
 fn get_signature_string(method: &ImplItemMethod) -> String {
@@ -270,15 +328,16 @@ fn move_methods_to_prototype(info: &mut ClassInfo){
     let mro = info.get_mro();
     for parent_info in mro {
         let prototype = parent_info.get_real();
-        let mut o_prototype_impl = info._trait_impl.get_mut(&Box::new(prototype.clone()));
+        let key = Box::new(prototype.clone());
+        let mut o_prototype_impl = info._trait_impl.get_mut(&key);
+
         if o_prototype_impl.is_none() {
-            
             create_prototype(info, &parent_info);
-            o_prototype_impl = info._trait_impl.get_mut(&Box::new(prototype.clone()));
+            o_prototype_impl = info._trait_impl.get_mut(&key);
         }
         
         move_methods_to_impl(info._impl.as_mut().unwrap(), o_prototype_impl.as_mut().unwrap()
-                , parent_info._trait_impl.get(&Box::new(prototype.clone())).unwrap());
+                , parent_info._trait_impl.get(&key).unwrap());
     }
 }
 
@@ -286,23 +345,38 @@ fn move_methods_to_real(info: &mut ClassInfo){
     let real = info.get_real();
     let name = info.get_ident();
 
-    let mut o_real_impl = info._trait_impl.get_mut(&Box::new(real.clone()));
+    let key = Box::new(real.clone());
+    let mut o_real_impl = info._trait_impl.get_mut(&key);
     if o_real_impl.is_none() {
         create_trait_impl(info, &real, &name);
-        o_real_impl = info._trait_impl.get_mut(&Box::new(real));
+        o_real_impl = info._trait_impl.get_mut(&key);
+
+        let _trait_impl = o_real_impl.as_mut().unwrap();
+        let parent_trait_impl = info._impl.as_ref().unwrap();
+        _trait_impl.generics = parent_trait_impl.generics.clone();
+        _trait_impl.unsafety = parent_trait_impl.unsafety.clone();
+        _trait_impl.defaultness = parent_trait_impl.defaultness.clone();
     }
 
     let from = info._impl.as_mut().unwrap();
     let to = o_real_impl.unwrap();
 
-    for method in &mut get_methods(from) {
-        parse_expr::parse_block(&mut method.block);
-        to.items.push(syn::ImplItem::Method(method.to_owned()));
-    }
+    let keep = String::from("keep");
+    let methods = &mut get_methods(from);
     from.items.retain(|item| match item {
         syn::ImplItem::Method(_) => false,
         _ => true,
     });
+    for method in methods {
+        let attrs = get_meta_from_method(method);
+        parse_expr::parse_block(&mut method.block);
+        if attrs.contains(&keep) {
+            remove_meta_from_method(method, &keep);
+            from.items.push(syn::ImplItem::Method(method.to_owned()))
+        } else {
+            to.items.push(syn::ImplItem::Method(method.to_owned()));
+        }
+    }
 }
 
 fn move_methods_to_impl(from: &mut ItemImpl, to: &mut ItemImpl, origin: &ItemImpl) {
@@ -310,7 +384,7 @@ fn move_methods_to_impl(from: &mut ItemImpl, to: &mut ItemImpl, origin: &ItemImp
             .map(get_signature_string).collect();
     
     let mut removed: Vec<String> = Vec::new();
-
+    
     for method in get_methods(from) {
         let signature_string = get_signature_string(&method);
         if real_methods.contains(&signature_string) {
@@ -329,12 +403,18 @@ fn move_methods_to_impl(from: &mut ItemImpl, to: &mut ItemImpl, origin: &ItemImp
 fn create_prototype(info: &mut ClassInfo, parent_info: &ClassInfo) {
     let prototype = parent_info.get_real();
     let name = info.get_ident();
-
     create_trait_impl(info, &prototype, &name);
+    let key = Box::new(prototype.clone());
+    let _trait_impl = info._trait_impl.get_mut(&key).unwrap();
+    let parent_trait_impl = parent_info._trait_impl.get(&key).unwrap();
+    _trait_impl.generics = parent_trait_impl.generics.clone();
+    _trait_impl.unsafety = parent_trait_impl.unsafety.clone();
+    _trait_impl.defaultness = parent_trait_impl.defaultness.clone();
 }
 
 fn create_trait_impl(info: &mut ClassInfo, _trait: &Ident, name: &Ident) {
-    info._trait_impl.insert(Box::new(_trait.clone()), Box::new(syn::parse2(quote!{
+    let _trait_impl = Box::new(syn::parse2(quote!{
         impl #_trait for #name { }
-    }).unwrap()));
+    }).unwrap());
+    info._trait_impl.insert(Box::new(_trait.clone()), _trait_impl);
 }

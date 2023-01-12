@@ -1,5 +1,5 @@
 use proc_macro2::TokenStream;
-use syn::{Expr, Block, Pat, Stmt, parse2, ExprTuple};
+use syn::{Expr, Block, Pat, Stmt, ExprTuple, Error};
 use quote::{quote, ToTokens};
 
 fn parse_statement(stmt: &mut Stmt) -> TokenStream {
@@ -39,8 +39,14 @@ pub fn parse_expr(expr: &mut Expr) -> TokenStream{
                 parse_expr(elem);
             }
         },
-        Expr::Assign(x) => { parse_expr(&mut x.right); },
-        Expr::AssignOp(x) => { parse_expr(&mut x.right); },
+        Expr::Assign(x) => { 
+            parse_expr(&mut x.left);
+            parse_expr(&mut x.right); 
+        },
+        Expr::AssignOp(x) => { 
+            parse_expr(&mut x.left);
+            parse_expr(&mut x.right); 
+        },
         Expr::Async(x) => { 
             for stmt in &mut x.block.stmts {
                 parse_statement(stmt);
@@ -108,9 +114,15 @@ pub fn parse_expr(expr: &mut Expr) -> TokenStream{
         Expr::Macro(x) => {
             let tokens = &x.mac.tokens;
             
-            let _expr: &mut ExprTuple = &mut syn::parse2(quote!{( #tokens )}).unwrap();
-            let _expr: ExprTuple = syn::parse2(parse_expr(&mut Expr::Tuple(_expr.to_owned()))).unwrap();
-            x.mac.tokens = _expr.elems.to_token_stream();
+            let _expr: Result<ExprTuple, Error> = syn::parse2(quote!{( #tokens )});
+            if _expr.is_ok() {
+                let _expr: Result<ExprTuple, Error> = syn::parse2(parse_expr(&mut Expr::Tuple(_expr.unwrap().to_owned())));
+                x.mac.tokens = _expr.unwrap().elems.to_token_stream();
+            } else {
+                let _expr: &mut Expr = &mut syn::parse2(tokens.clone()).unwrap();
+                let _expr: Expr = syn::parse2(parse_expr(_expr)).unwrap();
+                x.mac.tokens = _expr.to_token_stream();
+            }
         },
         Expr::Match(x) => {
             parse_expr(&mut x.expr);
@@ -131,14 +143,17 @@ pub fn parse_expr(expr: &mut Expr) -> TokenStream{
         Expr::Path(x) => {
             let segments = &mut x.path.segments;
             if segments.len() == 1 {
-                if &segments[0].ident.to_string() == "self" {
+                let ident = segments[0].ident.to_string();
+                if &ident == "this" {
+                    return quote!{self}
+                } else if &ident == "self" {
                     return quote!{unsafe {self.__real__.as_ref().unwrap()}}
-                } else if &segments[0].ident.to_string() == "super" {
-                    segments.clear();
-                    segments.push(parse2(quote!{self.__prototype__}).unwrap());
-                } else if &segments[0].ident.to_string() == "this" {
-                    segments.clear();
-                    segments.push(parse2(quote!{self}).unwrap());
+                } else if &ident == "self_mut" {
+                    return quote!{unsafe { self.__real__.as_mut().unwrap() }}
+                } else if &ident == "_super" {
+                    return quote!{self.__prototype__}
+                } else if &ident == "_super_mut" {
+                    return quote!{unsafe { self.__prototype__.as_mut().get_unchecked_mut() }}
                 }
             }
         },
