@@ -76,13 +76,10 @@ impl ClassInfo {
 
     pub fn get_parent_info(&self) -> ClassInfo {
         let class_map = CLASSES.lock().unwrap();
-        //println!("before find parent");
+
         let result = class_map.get(&self._parent.as_ref().unwrap().parent.to_string());
-        //println!("after find parent");
         if result.is_none() {
             panic!("the parent of {}, {} is null", self.get_ident(), self._parent.as_ref().unwrap().parent.to_string());
-        } else {
-            //println!("find parent: {}", self._parent.as_ref().unwrap().parent.to_string());
         }
         ClassInfo::deserialize(result.unwrap().to_string())
     }
@@ -116,17 +113,42 @@ impl syn::parse::Parse for ClassInfo {
             None
         };
 
-        let _struct: Option<ItemStruct> = Some(input.parse()?);
+        let _struct: Option<ItemStruct> = input.parse().ok();
         let mut _impl: Option<ItemImpl> = None;
         let mut _trait_impl: HashMap<Box<proc_macro2::Ident>, Box<ItemImpl>> = HashMap::new();
+        if _struct.is_none() {
+            panic!("missing struct");
+        }
+
+        let mut last: Option<String> = None;
 
         while !input.is_empty() {
-            let item_impl: Box<ItemImpl> = Box::new(input.parse()?);
-            if item_impl.as_ref().trait_.is_some() {
-                _trait_impl.insert(Box::new(item_impl.trait_.as_ref().unwrap().1.get_ident().unwrap().clone()), item_impl);
-            } else {
-                _impl = Some(*item_impl);
+            let item_impl: Result<ItemImpl> = input.parse();
+            if item_impl.is_err() {
+                if last.is_some() {
+                    println!("error while parsing impl after {}", last.unwrap());
+                } else {
+                    println!("error while parsing impl right after struct");
+                }
+                panic!("{}", item_impl.as_ref().err().unwrap().to_string())
             }
+
+            last = Some(if item_impl.as_ref().unwrap().trait_.is_some() {
+                item_impl.as_ref().unwrap().trait_.as_ref().unwrap().1.to_token_stream()
+            } else {
+                item_impl.as_ref().unwrap().self_ty.to_token_stream()
+            }.to_string());
+
+            let item_impl_boxed: Box<ItemImpl> = Box::new(item_impl.unwrap());
+            if item_impl_boxed.as_ref().trait_.is_some() {
+                _trait_impl.insert(Box::new(item_impl_boxed.trait_.as_ref().unwrap().1.get_ident().unwrap().clone()), item_impl_boxed);
+            } else {
+                _impl = Some(*item_impl_boxed);
+            }
+        }
+
+        if _impl.is_none() {
+            panic!("missing impl!");
         }
 
         Ok(Self {

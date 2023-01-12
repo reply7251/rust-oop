@@ -41,5 +41,5 @@ class! {
 class! {
     extends Example;
     struct Sub { }
-    impl Sub {}
+    impl Sub { }
 }
