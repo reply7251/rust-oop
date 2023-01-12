@@ -1,4 +1,4 @@
-use oop::{class, def_as_mut};
+use rust_oop::{class, def_as_mut};
 use std::pin::Pin;
 
 def_as_mut!();

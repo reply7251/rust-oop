@@ -1,7 +1,7 @@
 
 use std::pin::Pin;
 
-use oop::{class, def_as_mut};
+use rust_oop::{class, def_as_mut};
 
 def_as_mut!();
 
