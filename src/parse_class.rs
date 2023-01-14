@@ -97,8 +97,7 @@ fn create_new_with_parent(info: &mut ClassInfo, parent: &ClassInfo) {
                                 Pat::Ident(ident) => {
                                     parent_inputs_call.push(ident.ident.clone());
                                 },
-                                _ => {
-                                },
+                                _ => { },
                             }
                         },
                     }
