@@ -9,7 +9,7 @@ fn parse_statement(stmt: &mut Stmt) -> TokenStream {
                 parse_expr(&mut x.init.as_mut().unwrap().1);
             }
         },
-        Stmt::Item(_) => {},
+        Stmt::Item(_) => { },
         Stmt::Expr(x) => {
             parse_expr(x);
         },
@@ -67,7 +67,7 @@ pub fn parse_expr(expr: &mut Expr) -> TokenStream{
         Expr::Box(x) => {
             parse_expr(&mut x.expr);
         },
-        Expr::Break(_) => todo!(),
+        Expr::Break(_) => {},
         Expr::Call(x) => {
             for arg in &mut x.args {
                 parse_expr(arg);
@@ -80,7 +80,7 @@ pub fn parse_expr(expr: &mut Expr) -> TokenStream{
         Expr::Closure(x) => {
             parse_expr(&mut x.body);
         },
-        Expr::Continue(_) => todo!(),
+        Expr::Continue(_) => {},
         Expr::Field(x) => {
             x.base = syn::parse2(parse_expr(&mut x.base)).unwrap();
         },
@@ -196,14 +196,14 @@ pub fn parse_expr(expr: &mut Expr) -> TokenStream{
                 parse_expr(elem);
             }
         },
-        Expr::Type(_) => todo!(),
+        Expr::Type(_) => {},
         Expr::Unary(x) => {
             parse_expr(&mut x.expr);
         },
         Expr::Unsafe(x) => {
             parse_block(&mut x.block);
         },
-        Expr::Verbatim(_) => todo!(),
+        Expr::Verbatim(_) => {},
         Expr::While(x) => {
             parse_expr(&mut x.cond);
             parse_block(&mut x.body);

@@ -104,7 +104,7 @@ fn create_new_with_parent(info: &mut ClassInfo, parent: &ClassInfo) {
                     }
                 }
             },
-            _ => todo!(),
+            _ => {},
         }
     }
 
@@ -245,7 +245,7 @@ fn parse_impl_with_parent(info: &mut ClassInfo, parent: &ClassInfo) {
                                     inputs.push(ident.ident);
                                 }
                             },
-                            _ => todo!(),
+                            _ => {},
                         }
                     },
                 }
