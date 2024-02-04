@@ -1,6 +1,7 @@
 use std::pin::Pin;
 
-use rust_oop::{class};
+use rust_oop::class;
+
 #[test]
 fn test() {
 

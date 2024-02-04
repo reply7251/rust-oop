@@ -90,11 +90,14 @@ lazy_static!{
 
 #[proc_macro]
 pub fn class(token: TokenStream) -> TokenStream {
-    let mut class_info: ClassInfo = syn::parse(token).unwrap();
+    let option =syn::parse(token);
+    if option.is_err() {
+        return option.err().unwrap().into_compile_error().into()
+    }
+    let mut class_info: ClassInfo = option.unwrap();
     let class_info = &mut class_info;
 
     parse_class(class_info);
-
 
     let _struct = class_info._struct.as_ref().unwrap();
     if class_info._impl.is_none() {

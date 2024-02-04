@@ -117,29 +117,13 @@ impl syn::parse::Parse for ClassInfo {
         let mut _impl: Option<ItemImpl> = None;
         let mut _trait_impl: HashMap<Box<proc_macro2::Ident>, Box<ItemImpl>> = HashMap::new();
         if _struct.is_none() {
-            panic!("missing struct");
+            return Err(input.error("missing struct"));
         }
 
-        let mut last: Option<String> = None;
-
         while !input.is_empty() {
-            let item_impl: Result<ItemImpl> = input.parse();
-            if item_impl.is_err() {
-                if last.is_some() {
-                    println!("error while parsing impl after {}", last.unwrap());
-                } else {
-                    println!("error while parsing impl right after struct");
-                }
-                panic!("{}", item_impl.as_ref().err().unwrap().to_string())
-            }
+            let item_impl: ItemImpl = input.parse()?;
 
-            last = Some(if item_impl.as_ref().unwrap().trait_.is_some() {
-                item_impl.as_ref().unwrap().trait_.as_ref().unwrap().1.to_token_stream()
-            } else {
-                item_impl.as_ref().unwrap().self_ty.to_token_stream()
-            }.to_string());
-
-            let item_impl_boxed: Box<ItemImpl> = Box::new(item_impl.unwrap());
+            let item_impl_boxed: Box<ItemImpl> = Box::new(item_impl);
             if item_impl_boxed.as_ref().trait_.is_some() {
                 _trait_impl.insert(Box::new(item_impl_boxed.trait_.as_ref().unwrap().1.get_ident().unwrap().clone()), item_impl_boxed);
             } else {
@@ -148,7 +132,7 @@ impl syn::parse::Parse for ClassInfo {
         }
 
         if _impl.is_none() {
-            panic!("missing impl!");
+            return Err(input.error("missing impl for struct."));
         }
 
         Ok(Self {
