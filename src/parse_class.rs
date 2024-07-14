@@ -88,6 +88,9 @@ fn create_new_with_parent(info: &mut ClassInfo, parent: &ClassInfo) {
     for item in &parent._impl.as_ref().unwrap().items {
         match item {
             ImplItem::Method(x) => {
+                if x.sig.ident.to_string() != "new" {
+                    continue;
+                }
                 for arg in &x.sig.inputs {
                     parent_inputs.push(arg.clone());
                     match arg {
